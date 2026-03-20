@@ -1,82 +1,40 @@
-# OpenPoke 🌴
+# Take-Home Assignment
 
-OpenPoke is a simplified, open-source take on [Interaction Company’s](https://interaction.co/about) [Poke](https://poke.com/) assistant—built to show how a multi-agent orchestration stack can feel genuinely useful. It keeps the handful of things Poke is great at (email triage, reminders, and persistent agents) while staying easy to spin up locally.
+## Task 1: Fix Agent Overload
 
-- Multi-agent FastAPI backend that mirrors Poke's interaction/execution split, powered by [OpenRouter](https://openrouter.ai/).
-- Gmail tooling via [Composio](https://composio.dev/) for drafting/replying/forwarding without leaving chat.
-- Trigger scheduler and background watchers for reminders and "important email" alerts.
-- Next.js web UI that proxies everything through the shared `.env`, so plugging in API keys is the only setup.
+When conversation history or the agent roster grows large, the system hits context-window limits and degrades. I addressed this across several areas:
 
-## Requirements
-- Python 3.10+
-- Node.js 18+
-- npm 9+
+- **Context windowing** in the interaction agent loop — drops the oldest messages when estimated tokens exceed a threshold
+- **Semantic agent selection** — embeds agent descriptions and selects the most relevant subset to include in the prompt instead of dumping all of them
+- **Smarter summarization** — added a character-based trigger so large email payloads get summarized before they bloat the context
 
-## Quickstart
-1. **Clone and enter the repo.**
-   ```bash
-   git clone https://github.com/shlokkhemani/OpenPoke
-   cd OpenPoke
-   ```
-2. **Create a shared env file.** Copy the template and open it in your editor:
-   ```bash
-   cp .env.example .env
-   ```
-3. **Get your API keys and add them to `.env`:**
-   
-   **OpenRouter (Required)**
-   - Create an account at [openrouter.ai](https://openrouter.ai/)
-   - Generate an API key
-   - Replace `your_openrouter_api_key_here` with your actual key in `.env`
-   
-   **Composio (Required for Gmail)**
-   - Sign in at [composio.dev](https://composio.dev/)
-   - Create an API key
-   - Set up Gmail integration and get your auth config ID
-   - Replace `your_composio_api_key_here` and `your_gmail_auth_config_id_here` in `.env`
-4. **(Required) Create and activate a Python 3.10+ virtualenv:**
-   ```bash
-   # Ensure you're using Python 3.10+
-   python3.10 -m venv .venv
-   source .venv/bin/activate
-   
-   # Verify Python version (should show 3.10+)
-   python --version
-   ```
-   On Windows (PowerShell):
-   ```powershell
-   # Use Python 3.10+ (adjust path as needed)
-   python3.10 -m venv .venv
-   .\.venv\Scripts\Activate.ps1
-   
-   # Verify Python version
-   python --version
-   ```
+## Task 2: Natural-Language Email Rules
 
-5. **Install backend dependencies:**
-   ```bash
-   pip install -r server/requirements.txt
-   ```
-6. **Install frontend dependencies:**
-   ```bash
-   npm install --prefix web
-   ```
-7. **Start the FastAPI server:**
-   ```bash
-   python -m server.server --reload
-   ```
-8. **Start the Next.js app (new terminal):**
-   ```bash
-   npm run dev --prefix web
-   ```
-9. **Connect Gmail for email workflows.** With both services running, open [http://localhost:3000](http://localhost:3000), head to *Settings → Gmail*, and complete the Composio OAuth flow. This step is required for email drafting, replies, and the important-email monitor.
+Users can now create email rules through chat (e.g. "star anything from alice@example.com"). The system:
 
-The web app proxies API calls to the Python server using the values in `.env`, so keeping both processes running is required for end-to-end flows.
+- Parses natural language into structured conditions and actions via the execution agent
+- Evaluates rules against incoming emails in the background watcher
+- Executes matched actions (star, archive, label, notify) through the existing Gmail integration
+- Persists rules in SQLite with full CRUD exposed as agent tools
 
-## Project Layout
-- `server/` – FastAPI application and agents
-- `web/` – Next.js app
-- `server/data/` – runtime data (ignored by git)
+Business impact: changing openpoke from "tool used daily" to "infrastructure that's depended on"
 
-## License
-MIT — see [LICENSE](LICENSE).
+Potential next steps:
+
+- Context-free grammar validation
+- Auto-reply / auto-forward actions
+- Rule suggestions based on user behavior
+- Rule conflict detection
+
+Other ideas considered:
+
+- Attachment reader
+- Follow up tracker
+- Daily briefing
+- Contact relationship context
+- Cross thread queries
+
+## Small Changes
+
+- Add unit tests to ensure expected behavior
+- Add configurable .env variables to reduce costs when testing in dev
