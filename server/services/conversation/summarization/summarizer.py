@@ -20,6 +20,11 @@ def _resolve_conversation_log() -> "ConversationLog":
     return get_conversation_log()
 
 
+def _estimate_entry_chars(entries: List[LogEntry]) -> int:
+    """Total character count across all entry payloads."""
+    return sum(len(e.payload) for e in entries)
+
+
 def _collect_entries(log) -> List[LogEntry]:
     entries: List[LogEntry] = []
     for index, (tag, timestamp, payload) in enumerate(log.iter_entries()):
@@ -27,7 +32,7 @@ def _collect_entries(log) -> List[LogEntry]:
     return entries
 
 
-async def _call_openrouter(prompt: SummaryPrompt, model: str, api_key: Optional[str]) -> str:
+async def _call_openrouter(prompt: SummaryPrompt, model: str, api_key: Optional[str], max_tokens: Optional[int] = None) -> str:
     last_error: Exception | None = None
     for attempt in range(2):
         try:
@@ -36,6 +41,7 @@ async def _call_openrouter(prompt: SummaryPrompt, model: str, api_key: Optional[
                 messages=prompt.messages,
                 system=prompt.system_prompt,
                 api_key=api_key,
+                max_tokens=max_tokens,
             )
             choices = response.get("choices") or []
             if not choices:
@@ -88,7 +94,10 @@ async def summarize_conversation() -> bool:
         return False
 
     unsummarized_entries = [entry for entry in entries if entry.index > state.last_index]
-    if len(unsummarized_entries) < threshold + tail_size:
+    char_total = _estimate_entry_chars(unsummarized_entries)
+    count_trigger = len(unsummarized_entries) >= threshold + tail_size
+    char_trigger = char_total >= settings.conversation_summary_char_threshold
+    if not (count_trigger or char_trigger):
         return False
 
     batch = unsummarized_entries[:threshold]
@@ -107,7 +116,7 @@ async def summarize_conversation() -> bool:
         },
     )
 
-    summary_text = await _call_openrouter(prompt, settings.summarizer_model, settings.openrouter_api_key)
+    summary_text = await _call_openrouter(prompt, settings.summarizer_model, settings.openrouter_api_key, settings.summarizer_max_tokens)
     summary_body = summary_text if summary_text else state.summary_text
 
     refreshed_entries = _collect_entries(conversation_log)

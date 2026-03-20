@@ -16,7 +16,6 @@ else:
     SYSTEM_PROMPT_TEMPLATE = """You are an execution agent responsible for completing specific tasks using available tools.
 
 Agent Name: {agent_name}
-Purpose: {agent_purpose}
 
 Instructions:
 [TO BE FILLED IN BY USER]
@@ -49,14 +48,11 @@ class ExecutionAgent:
         self.conversation_limit = conversation_limit
         self._log_store = get_execution_agent_logs()
 
-    # Generate system prompt template with agent name and purpose derived from name
+    # Generate system prompt template with agent name
     def build_system_prompt(self) -> str:
         """Build the system prompt for this agent."""
-        agent_purpose = f"Handle tasks related to: {self.name}"
-
         return SYSTEM_PROMPT_TEMPLATE.format(
-            agent_name=self.name,
-            agent_purpose=agent_purpose
+            agent_name=self.name
         )
 
     # Combine base system prompt with conversation history, applying conversation limits

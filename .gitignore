@@ -44,3 +44,8 @@ server/venv/
 # Generated documentation / analysis artifacts
 server/repomix-output.txt
 server/plans/
+ai-review/
+
+# Claude
+.claude/
+CLAUDE.md

@@ -1,29 +1,41 @@
-"""Simple agent roster management - just a list of agent names."""
+"""Simple agent roster management - agent names with usage metadata."""
 
 import json
 import fcntl
 import time
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import List, Optional
 
 from ...logging_config import logger
 
 
 class AgentRoster:
-    """Simple roster that stores agent names in a JSON file."""
+    """Roster that stores agents with recency and frequency metadata in a JSON file."""
 
     def __init__(self, roster_path: Path):
         self._roster_path = roster_path
-        self._agents: list[str] = []
+        self._agents: list[dict] = []
         self.load()
 
     def load(self) -> None:
-        """Load agent names from roster.json."""
+        """Load agents from roster.json, handling both legacy (list[str]) and current formats."""
         if self._roster_path.exists():
             try:
                 with open(self._roster_path, 'r') as f:
                     data = json.load(f)
                     if isinstance(data, list):
-                        self._agents = [str(name) for name in data]
+                        self._agents = []
+                        for item in data:
+                            if isinstance(item, str):
+                                # Migrate legacy format: plain string → dict
+                                self._agents.append({
+                                    "name": item,
+                                    "last_used": None,
+                                    "use_count": 0,
+                                })
+                            elif isinstance(item, dict) and "name" in item:
+                                self._agents.append(item)
             except Exception as exc:
                 logger.warning(f"Failed to load roster.json: {exc}")
                 self._agents = []
@@ -32,7 +44,7 @@ class AgentRoster:
             self.save()
 
     def save(self) -> None:
-        """Save agent names to roster.json with file locking."""
+        """Save agents to roster.json with file locking."""
         max_retries = 5
         retry_delay = 0.1
 
@@ -40,7 +52,6 @@ class AgentRoster:
             try:
                 self._roster_path.parent.mkdir(parents=True, exist_ok=True)
 
-                # Open file and acquire exclusive lock
                 with open(self._roster_path, 'w') as f:
                     fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                     try:
@@ -50,10 +61,9 @@ class AgentRoster:
                         fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
             except BlockingIOError:
-                # Lock is held by another process
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay)
-                    retry_delay *= 2  # Exponential backoff
+                    retry_delay *= 2
                 else:
                     logger.warning("Failed to acquire lock on roster.json after retries")
             except Exception as exc:
@@ -61,14 +71,48 @@ class AgentRoster:
                 break
 
     def add_agent(self, agent_name: str) -> None:
-        """Add an agent to the roster if not already present."""
-        if agent_name not in self._agents:
-            self._agents.append(agent_name)
+        """Add a new agent to the roster with initial usage metadata."""
+        self.load()
+        if not any(a["name"] == agent_name for a in self._agents):
+            self._agents.append({
+                "name": agent_name,
+                "last_used": datetime.now(timezone.utc).isoformat(),
+                "use_count": 1,
+            })
             self.save()
+
+    def touch_agent(self, agent_name: str) -> None:
+        """Update last_used timestamp and increment use_count for an existing agent."""
+        self.load()
+        for agent in self._agents:
+            if agent["name"] == agent_name:
+                agent["last_used"] = datetime.now(timezone.utc).isoformat()
+                agent["use_count"] = agent.get("use_count", 0) + 1
+                self.save()
+                return
 
     def get_agents(self) -> list[str]:
         """Get list of all agent names."""
+        return [a["name"] for a in self._agents]
+
+    def get_agent_entries(self) -> list[dict]:
+        """Get full agent entries including usage metadata."""
         return list(self._agents)
+
+    def get_embedding(self, agent_name: str) -> Optional[List[float]]:
+        """Return the stored embedding for an agent, or None if not yet computed."""
+        for agent in self._agents:
+            if agent["name"] == agent_name:
+                return agent.get("embedding")
+        return None
+
+    def store_embedding(self, agent_name: str, embedding: List[float]) -> None:
+        """Persist an embedding for an agent in-place and save to disk."""
+        for agent in self._agents:
+            if agent["name"] == agent_name:
+                agent["embedding"] = embedding
+                self.save()
+                return
 
     def clear(self) -> None:
         """Clear the agent roster."""

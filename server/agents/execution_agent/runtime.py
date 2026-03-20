@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from .agent import ExecutionAgent
 from .tools import get_tool_schemas, get_tool_registry
-from ...config import get_settings
+from ...config import Settings, get_settings
 from ...openrouter_client import request_chat_completion
 from ...logging_config import logger
 
@@ -30,6 +30,7 @@ class ExecutionAgentRuntime:
     # Initialize execution agent runtime with settings, tools, and agent instance
     def __init__(self, agent_name: str):
         settings = get_settings()
+        self.settings = settings
         self.agent = ExecutionAgent(agent_name)
         self.api_key = settings.openrouter_api_key
         self.model = settings.execution_agent_model
@@ -120,6 +121,11 @@ class ExecutionAgentRuntime:
                     }
                     messages.append(tool_message)
 
+                # Trim context if it exceeds the token budget
+                self._trim_messages_if_needed(
+                    messages, self.settings.execution_agent_max_context_tokens
+                )
+
             else:
                 raise RuntimeError("Reached tool iteration limit without final response")
 
@@ -146,6 +152,49 @@ class ExecutionAgentRuntime:
                 success=False,
                 response=failure_text,
                 error=error_msg
+            )
+
+    @staticmethod
+    def _estimate_tokens(data: Any) -> int:
+        """Approximate token count using chars/4 (no extra dependencies)."""
+        return len(json.dumps(data, default=str)) // 4
+
+    def _trim_messages_if_needed(
+        self, messages: List[Dict[str, Any]], max_tokens: int
+    ) -> None:
+        """Drop oldest assistant+tool pairs from messages[1:] if over token budget."""
+        if len(messages) <= 1:
+            return
+        total = sum(self._estimate_tokens(m) for m in messages)
+        if total <= max_tokens:
+            return
+
+        while total > max_tokens:
+            first_asst = next(
+                (i for i in range(1, len(messages)) if messages[i].get("role") == "assistant"),
+                None,
+            )
+            if first_asst is None:
+                break
+
+            end = first_asst + 1
+            while end < len(messages) and messages[end].get("role") == "tool":
+                end += 1
+
+            has_more_asst = any(
+                messages[j].get("role") == "assistant" for j in range(end, len(messages))
+            )
+            if not has_more_asst:
+                break
+
+            for m in messages[first_asst:end]:
+                total -= self._estimate_tokens(m)
+            del messages[first_asst:end]
+
+        if total > max_tokens:
+            logger.debug(
+                "Execution agent context still over budget after trimming; at minimum pair floor",
+                extra={"estimated_tokens": total, "max_tokens": max_tokens},
             )
 
     # Execute OpenRouter API call with system prompt, messages, and optional tool schemas

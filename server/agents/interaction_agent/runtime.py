@@ -70,7 +70,7 @@ class InteractionAgentRuntime:
             self.conversation_log.record_user_message(user_message)
 
             system_prompt = build_system_prompt()
-            messages = prepare_message_with_history(
+            messages = await prepare_message_with_history(
                 user_message, transcript_before, message_type="user"
             )
 
@@ -89,7 +89,7 @@ class InteractionAgentRuntime:
             )
 
         except Exception as exc:
-            logger.error("Interaction agent failed", extra={"error": str(exc)})
+            logger.error("Interaction agent failed: %s", exc, exc_info=True)
             return InteractionResult(
                 success=False,
                 response="",
@@ -105,7 +105,7 @@ class InteractionAgentRuntime:
             self.conversation_log.record_agent_message(agent_message)
 
             system_prompt = build_system_prompt()
-            messages = prepare_message_with_history(
+            messages = await prepare_message_with_history(
                 agent_message, transcript_before, message_type="agent"
             )
 
@@ -182,6 +182,10 @@ class InteractionAgentRuntime:
                     "content": self._format_tool_result(tool_call, result),
                 }
                 messages.append(tool_message)
+
+            self._trim_messages_if_needed(
+                messages, self.settings.interaction_agent_max_context_tokens
+            )
         else:
             raise RuntimeError("Reached tool iteration limit without final response")
 
@@ -190,6 +194,52 @@ class InteractionAgentRuntime:
 
         return summary
 
+    @staticmethod
+    def _estimate_tokens(data: Any) -> int:
+        """Approximate token count using chars/4 (no extra dependencies)."""
+        return len(json.dumps(data, default=str)) // 4
+
+    def _trim_messages_if_needed(
+        self, messages: List[Dict[str, Any]], max_tokens: int
+    ) -> None:
+        """Drop oldest assistant+tool pairs from messages[1:] if over token budget."""
+        if len(messages) <= 1:
+            return
+        total = sum(self._estimate_tokens(m) for m in messages)
+        if total <= max_tokens:
+            return
+
+        while total > max_tokens:
+            # Find the oldest assistant message after messages[0]
+            first_asst = next(
+                (i for i in range(1, len(messages)) if messages[i].get("role") == "assistant"),
+                None,
+            )
+            if first_asst is None:
+                break
+
+            # Find the end of this pair (all following tool messages)
+            end = first_asst + 1
+            while end < len(messages) and messages[end].get("role") == "tool":
+                end += 1
+
+            # Never drop the last pair — preserve at least one iteration of context
+            has_more_asst = any(
+                messages[j].get("role") == "assistant" for j in range(end, len(messages))
+            )
+            if not has_more_asst:
+                break
+
+            for m in messages[first_asst:end]:
+                total -= self._estimate_tokens(m)
+            del messages[first_asst:end]
+
+        if total > max_tokens:
+            logger.debug(
+                "Context still over budget after trimming; at minimum pair floor",
+                extra={"estimated_tokens": total, "max_tokens": max_tokens},
+            )
+
     # Load conversation history, preferring summarized version if available
     def _load_conversation_transcript(self) -> str:
         if self.settings.summarization_enabled:
@@ -197,6 +247,10 @@ class InteractionAgentRuntime:
             if rendered.strip():
                 return rendered
         return self.conversation_log.load_transcript()
+
+    def _should_cache_prompt(self) -> bool:
+        """Return True when prompt caching should be requested for the current model."""
+        return self.settings.enable_prompt_caching and self.model.startswith("anthropic/")
 
     # Execute API call to OpenRouter with system prompt, messages, and tool schemas
     async def _make_llm_call(
@@ -216,6 +270,7 @@ class InteractionAgentRuntime:
             system=system_prompt,
             api_key=self.api_key,
             tools=self.tool_schemas,
+            cache_system_prompt=self._should_cache_prompt(),
         )
 
     # Extract the assistant's message from the OpenRouter API response structure
