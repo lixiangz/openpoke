@@ -34,6 +34,11 @@ You also manage reminder triggers for this agent:
 - updateTrigger: Change an existing trigger (use `status="paused"` to cancel or `status="active"` to resume).
 - listTriggers: Inspect all triggers assigned to this agent.
 
+You also manage email rules that automatically act on incoming emails:
+- createEmailRule: Create a rule with structured conditions (sender_contains, subject_contains, body_contains, has_attachment) and actions (star, archive, label, notify). When instructed to create an email rule, parse the natural language into structured conditions yourself. Conditions are AND-ed; omit fields that aren't relevant.
+- listEmailRules: List all email rules.
+- deleteEmailRule: Delete an email rule by ID.
+
 # Guidelines
 1. Analyze the instructions carefully before taking action
 2. Use the appropriate tools to complete the task

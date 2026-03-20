@@ -13,6 +13,9 @@ from .seen_store import GmailSeenStore
 from .importance_classifier import classify_email_importance
 from ...logging_config import logger
 from ...utils.timezones import convert_to_user_timezone
+from ..email_rules import get_email_rule_service
+from ..email_rules.actions import execute_rule_actions
+from ..email_rules.engine import evaluate_rules
 
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -194,6 +197,35 @@ class ImportantEmailWatcher:
             self._complete_poll(user_now)
             return
 
+        # --- Email rule evaluation ---
+        rule_service = get_email_rule_service()
+        active_rules = rule_service.list_active_rules()
+        for email in eligible_emails:
+            if active_rules:
+                try:
+                    matched = evaluate_rules(email, active_rules)
+                    for matched_rule, matched_actions in matched:
+                        action_results = await execute_rule_actions(email, matched_actions, composio_user_id)
+                        rule_service.increment_match_count(matched_rule.id)
+                        for res in action_results:
+                            if res.get("action") == "notify" and res.get("summary"):
+                                await self._dispatch_summary(res["summary"])
+                        logger.info(
+                            "Email rule matched",
+                            extra={
+                                "rule_id": matched_rule.id,
+                                "rule_name": matched_rule.name,
+                                "email_id": email.id,
+                            },
+                        )
+                except Exception:
+                    logger.warning(
+                        "Email rule evaluation failed for email",
+                        extra={"email_id": email.id},
+                        exc_info=True,
+                    )
+
+        # --- Importance classification ---
         summaries_sent = 0
         processed_ids: List[str] = [email.id for email in aged_emails]
 

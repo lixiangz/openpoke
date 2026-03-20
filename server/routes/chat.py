@@ -1,8 +1,17 @@
+from typing import Union
+
 from fastapi import APIRouter
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from ..models import ChatHistoryClearResponse, ChatHistoryResponse, ChatRequest
-from ..services import get_conversation_log, get_trigger_service, handle_chat_request
+from ..services import (
+    get_agent_roster,
+    get_conversation_log,
+    get_email_rule_service,
+    get_execution_agent_logs,
+    get_trigger_service,
+    handle_chat_request,
+)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -24,8 +33,6 @@ def chat_history() -> ChatHistoryResponse:
 
 @router.delete("/history", response_model=ChatHistoryClearResponse)
 def clear_history() -> ChatHistoryClearResponse:
-    from ..services import get_execution_agent_logs, get_agent_roster
-
     # Clear conversation log
     log = get_conversation_log()
     log.clear()
@@ -41,6 +48,10 @@ def clear_history() -> ChatHistoryClearResponse:
     # Clear stored triggers
     trigger_service = get_trigger_service()
     trigger_service.clear_all()
+
+    # Clear email rules
+    email_rule_service = get_email_rule_service()
+    email_rule_service.clear_all()
 
     return ChatHistoryClearResponse()
 
